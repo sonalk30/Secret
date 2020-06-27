@@ -5,7 +5,10 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-const encrypt = require("mongoose-encryption");
+// const encrypt = require("mongoose-encryption");
+// const md5 = require("md5");
+const bcrypt = require("bcrypt");
+const saltRounds = 10; //for bcrypt
 
 const app = express();
 
@@ -22,10 +25,14 @@ const userSchema = new mongoose.Schema ({
   password: String
 });
 
+// ************************** MONGOOSE ENCRYPTION ************************
+
 //ENCRYPTING DATABASE using mongoose-encryption package
 //use the secret to encrypt the database
 //take the schema created above and add mongoose-encrypt as an plugin to our schema and pass over our secret as a javascript object
-userSchema.plugin(encrypt, {secret: process.env.SECRET, encryptedFields: ["password"] });
+// userSchema.plugin(encrypt, {secret: process.env.SECRET, encryptedFields: ["password"] });
+
+// **************************************************************************************
 
 
 //************* Use User Schema to create User Model ***************
@@ -49,29 +56,36 @@ app.get("/register", function(req, res){
 
 // **** POST request for the register route ****
 app.post("/register", function(req, res){
-  //create new user using User model
-  const newUser = new User({
-    //after body. is the value of the name attribute from form on register.ejs
-    email: req.body.username,
-    password: req.body.password
+  // bcrypt usage using hash
+  bcrypt.hash(req.body.password, 10, function(err, hash){
+    //create new user using User model
+    const newUser = new User({
+      //after body. is the value of the name attribute from form on register.ejs
+      email: req.body.username,
+      password: hash
+      //hash function md5 to turn password into irreversible hash
+      // password: md5(req.body.password)
+    });
+    //save this new user
+    //add a callback function to check for errors
+    newUser.save(function(err){
+      if(err){
+        console.log(err);
+      }
+      else {
+        //if no error render the secrets page
+        res.render("secrets");
+      }
+    });
   });
-  //save this new user
-  //add a callback function to check for errors
-  newUser.save(function(err){
-    if(err){
-      console.log(err);
-    }
-    else {
-      //if no error render the secrets page
-      res.render("secrets");
-    }
-  });
+
 });
 
 // **** POST request for the login route ****
 app.post("/login", function(req, res){
   const username = req.body.username;
   const password = req.body.password;
+  // const password = md5(req.body.password);
   //check the above values in database
   //look through collection of User
   User.findOne({email: username}, function(err, foundUser){
@@ -80,9 +94,12 @@ app.post("/login", function(req, res){
     }
     else {
       if(foundUser){
-        if(foundUser.password === password) {
-          res.render("secrets");
-        }
+        //to check our password using bcrypt compare
+        bcrypt.compare(password, foundUser.password, function(err, result){
+          if (result === true ){
+            res.render("secrets");
+          }
+        });
       }
     }
   });
