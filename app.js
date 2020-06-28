@@ -8,6 +8,8 @@ const mongoose = require("mongoose");
 const session = require("express-session");
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const findOrCreate = require('mongoose-findorcreate');
 
 const app = express();
 
@@ -38,12 +40,16 @@ mongoose.set("useCreateIndex", true);
 // a object that is created from mongoose schema class
 const userSchema = new mongoose.Schema ({
   email: String,
-  password: String
+  password: String,
+  googleId: String,
+  secret: String
 });
 
 // set up password local mongoose package
 // need to add to mongoose schema as a plugin
 userSchema.plugin(passportLocalMongoose);
+// adding mongoose findOrCreate as a plugin to our Schema
+userSchema.plugin(findOrCreate);
 
 // ************************** MONGOOSE ENCRYPTION ************************
 
@@ -61,14 +67,51 @@ const User = new mongoose.model("User", userSchema);
 
 // passport local configuration
 passport.use(User.createStrategy());
+// serialize and deserialize our user for local authentication
 
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
+passport.serializeUser(function(user, done) {
+  done(null, user.id);
+});
+
+passport.deserializeUser(function(id, done) {
+  User.findById(id, function(err, user) {
+    done(err, user);
+  });
+});
+
+//************* set up our GoogleStrategy *********
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    // from google OAuth client id creation the redirect URI
+    callbackURL: "http://localhost:3000/auth/google/secrets",
+    // google+ api
+    userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
 
 //**** GET request to the root route ****
 app.get("/", function(req, res){
   res.render("home");
 });
+
+//**** GET REQUEST FOR /auth/google route ****
+app.get("/auth/google",
+  passport.authenticate("google", {scope: ["profile"] })
+);
+
+app.get("/auth/google/secrets",
+  passport.authenticate('google', { failureRedirect: '/login' }),
+  function(req, res) {
+    // Successful authentication, redirect to secrets.
+    res.redirect('/secrets');
+  });
 
 //**** GET request to the login route ****
 app.get("/login", function(req, res){
@@ -82,14 +125,49 @@ app.get("/register", function(req, res){
 
 //**** GET request to the secrets route ****
 app.get("/secrets", function(req, res){
+  // find all secrets submitted to db and see them 
+  // anybody logged in or not can see secrets
+  User.find({"secret": {$ne: null}}, function(err, foundUsers){
+    if (err){
+      console.log(err);
+    }
+    else{
+      if(foundUsers){
+        res.render("secrets", {usersWithSecrets: foundUsers});
+      }
+    }
+  });
+});
+
+//**** GET request for submit route ****
+app.get("/submit", function(req, res){
   // inside here we check if the user is authenticated
   // relying on passport, session, passportLocal, passportLocalMongoose
   if(req.isAuthenticated()){
-    res.render("secrets");
+    res.render("submit");
   }
   else {
     res.redirect("/login");
   }
+});
+
+// **** POST request for submit route ****
+app.post("/submit", function(req, res){
+  const submittedSecret = req.body.secret;
+
+  User.findById(req.user.id, function(err, foundUser){
+    if(err){
+      console.log(err);
+    }
+    else {
+      if(foundUser){
+        foundUser.secret = submittedSecret;
+        foundUser.save(function(){
+          res.redirect("/secrets");
+        });
+      }
+    }
+  });
 });
 
 //**** GET request for the logout route ****
